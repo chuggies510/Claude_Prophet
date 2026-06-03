@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-01-05T18:03:27.787Z",
+  "action": "BUY",
+  "symbol": "NVDA",
+  "reasoning": "Opening swing position on NVDA March $185 calls. Catalyst: CES 2026 keynote driving semiconductor enthusiasm. 74 DTE provides time for thesis to develop. Delta 0.59 offers good leverage. Position size 14% of portfolio within risk limits. Stop: -15% ($14.94). Target: +25-50% ($21.98-$26.37).",
+  "market_data": {
+    "price": 187.93,
+    "strike": 185,
+    "expiry": "2026-03-20",
+    "dte": 74,
+    "delta": 0.59,
+    "iv": 0.46,
+    "bid": 17.53,
+    "ask": 17.63,
+    "contracts": 8,
+    "total_cost": 14064
+  }
+}
