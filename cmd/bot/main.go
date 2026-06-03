@@ -110,6 +110,12 @@ func main() {
 	activityLogger := services.NewActivityLogger("./activity_logs")
 	activityController := controllers.NewActivityController(activityLogger)
 
+	// Create session controller
+	sessionController, err := controllers.NewSessionController(tradingService)
+	if err != nil {
+		logger.Fatal("Failed to create session controller:", err)
+	}
+
 	// Start trading session automatically
 	if account, err := orderController.GetAccount(); err == nil {
 		activityLogger.StartSession(ctx, account.PortfolioValue)
@@ -117,7 +123,7 @@ func main() {
 	}
 
 	// Setup HTTP server
-	router := setupRouter(orderController, newsController, intelligenceController, positionController, activityController)
+	router := setupRouter(orderController, newsController, intelligenceController, positionController, activityController, sessionController)
 
 	// Start data cleanup routine
 	go startDataCleanup(ctx, storageService, cfg.DataRetentionDays, logger)
@@ -147,7 +153,7 @@ func main() {
 	}
 }
 
-func setupRouter(orderController *controllers.OrderController, newsController *controllers.NewsController, intelligenceController *controllers.IntelligenceController, positionController *controllers.PositionManagementController, activityController *controllers.ActivityController) *gin.Engine {
+func setupRouter(orderController *controllers.OrderController, newsController *controllers.NewsController, intelligenceController *controllers.IntelligenceController, positionController *controllers.PositionManagementController, activityController *controllers.ActivityController, sessionController *controllers.SessionController) *gin.Engine {
 	router := gin.Default()
 
 	// Enable CORS
@@ -223,6 +229,9 @@ func setupRouter(orderController *controllers.OrderController, newsController *c
 		api.POST("/activity/session/start", activityController.HandleStartSession)
 		api.POST("/activity/session/end", activityController.HandleEndSession)
 		api.POST("/activity/log", activityController.HandleLogActivity)
+
+		// Session status endpoint
+		api.GET("/session/status", sessionController.HandleGetSessionStatus)
 	}
 
 	// Serve dashboard

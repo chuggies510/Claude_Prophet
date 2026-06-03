@@ -44,6 +44,75 @@ async function callTradingBot(endpoint, method = 'GET', data = null) {
   }
 }
 
+// US market holidays for 2025 and 2026
+const marketHolidays = {
+  // 2025
+  '2025-01-01': 'closed',      // New Year's Day
+  '2025-01-20': 'closed',      // MLK Day
+  '2025-02-17': 'closed',      // Presidents Day
+  '2025-04-18': 'closed',      // Good Friday
+  '2025-05-26': 'closed',      // Memorial Day
+  '2025-06-19': 'closed',      // Juneteenth
+  '2025-07-04': 'closed',      // Independence Day
+  '2025-09-01': 'closed',      // Labor Day
+  '2025-11-27': 'closed',      // Thanksgiving
+  '2025-11-28': 'early_close', // Day after Thanksgiving (1 PM)
+  '2025-12-24': 'early_close', // Christmas Eve (1 PM)
+  '2025-12-25': 'closed',      // Christmas
+  // 2026
+  '2026-01-01': 'closed',      // New Year's Day
+  '2026-01-19': 'closed',      // MLK Day
+  '2026-02-16': 'closed',      // Presidents Day
+  '2026-04-03': 'closed',      // Good Friday
+  '2026-05-25': 'closed',      // Memorial Day
+  '2026-06-19': 'closed',      // Juneteenth
+  '2026-07-03': 'closed',      // Independence Day (observed)
+  '2026-09-07': 'closed',      // Labor Day
+  '2026-11-26': 'closed',      // Thanksgiving
+  '2026-11-27': 'early_close', // Day after Thanksgiving (1 PM)
+  '2026-12-24': 'early_close', // Christmas Eve (1 PM)
+  '2026-12-25': 'closed',      // Christmas
+};
+
+// Validate market hours for order placement
+function validateMarketHours() {
+  const now = new Date();
+  const etTime = now.toLocaleTimeString('en-US', {
+    timeZone: 'America/New_York',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const isoDate = now.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const [hours, minutes] = etTime.split(':').map(Number);
+  const marketMinutes = hours * 60 + minutes;
+
+  const holidayType = marketHolidays[isoDate];
+
+  if (holidayType === 'closed') {
+    return { allowed: false, reason: 'Market is closed today (holiday)' };
+  }
+
+  const dayOfWeek = now.getDay();
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    return { allowed: false, reason: 'Market is closed (weekend)' };
+  }
+
+  const marketOpen = 570; // 9:30 AM
+  const marketClose = holidayType === 'early_close' ? 780 : 960; // 1:00 PM or 4:00 PM
+
+  if (marketMinutes < marketOpen) {
+    return { allowed: false, reason: `Market opens at 9:30 AM ET (currently ${etTime})` };
+  }
+
+  if (marketMinutes >= marketClose) {
+    const closeTime = holidayType === 'early_close' ? '1:00 PM' : '4:00 PM';
+    return { allowed: false, reason: `Market closed at ${closeTime} ET` };
+  }
+
+  return { allowed: true };
+}
+
 // Create MCP server
 const server = new Server(
   {
@@ -720,7 +789,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'get_datetime',
-        description: 'Get the current date and time in a specified timezone. Defaults to America/New_York (US Eastern). Returns time, date, day of week, market status, and whether markets are likely open.',
+        description: 'Get the current date and time in a specified timezone. Defaults to America/New_York (US Eastern). Returns time, date, day of week, market status, minutes until close, and early close detection.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -729,6 +798,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: 'IANA timezone (e.g., "America/New_York", "America/Los_Angeles", "UTC"). Defaults to America/New_York.',
             },
           },
+        },
+      },
+      {
+        name: 'get_session_status',
+        description: 'Get trading session status with recommended monitoring interval based on open positions. Returns time until close, position-based wait recommendation (scalps: 5-10 min, swings: 30-60 min), and whether to continue trading. Use this before each wait cycle.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
         },
       },
       {
@@ -867,6 +944,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'place_buy_order': {
+        // Validate market hours before placing order
+        const buyMarketCheck = validateMarketHours();
+        if (!buyMarketCheck.allowed) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'ORDER_BLOCKED',
+                  reason: buyMarketCheck.reason,
+                  suggestion: 'Use limit orders with GTC time-in-force for after-hours entry',
+                }, null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
+
         // Transform quantity to qty for API compatibility
         const requestData = {
           symbol: args.symbol,
@@ -886,6 +981,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'place_sell_order': {
+        // Validate market hours before placing order
+        const sellMarketCheck = validateMarketHours();
+        if (!sellMarketCheck.allowed) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'ORDER_BLOCKED',
+                  reason: sellMarketCheck.reason,
+                  suggestion: 'Use limit orders with GTC time-in-force for after-hours entry',
+                }, null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
+
         // Transform quantity to qty for API compatibility
         const requestData = {
           symbol: args.symbol,
@@ -1377,6 +1490,24 @@ ${allNews.map((article, i) =>
       }
 
       case 'place_options_order': {
+        // Validate market hours before placing order
+        const marketCheck = validateMarketHours();
+        if (!marketCheck.allowed) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'ORDER_BLOCKED',
+                  reason: marketCheck.reason,
+                  suggestion: 'Use limit orders with GTC time-in-force for after-hours entry',
+                }, null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
+
         const requestData = {
           symbol: args.symbol,
           underlying: args.underlying,
@@ -1517,20 +1648,62 @@ ${allNews.map((article, i) =>
           const actualDay = now.getDay();
           const marketDay = actualDay >= 1 && actualDay <= 5;
 
-          // US market holidays for 2025
-          const holidays2025 = [
-            '2025-01-01', '2025-01-20', '2025-02-17', '2025-04-18',
-            '2025-05-26', '2025-06-19', '2025-07-04', '2025-09-01',
-            '2025-11-27', '2025-12-25',
-          ];
-          const isHoliday = holidays2025.includes(isoDate);
+          // US market holidays for 2025 and 2026
+          const marketHolidays = {
+            // 2025
+            '2025-01-01': 'closed',      // New Year's Day
+            '2025-01-20': 'closed',      // MLK Day
+            '2025-02-17': 'closed',      // Presidents Day
+            '2025-04-18': 'closed',      // Good Friday
+            '2025-05-26': 'closed',      // Memorial Day
+            '2025-06-19': 'closed',      // Juneteenth
+            '2025-07-04': 'closed',      // Independence Day
+            '2025-09-01': 'closed',      // Labor Day
+            '2025-11-27': 'closed',      // Thanksgiving
+            '2025-11-28': 'early_close', // Day after Thanksgiving (1 PM)
+            '2025-12-24': 'early_close', // Christmas Eve (1 PM)
+            '2025-12-25': 'closed',      // Christmas
+            // 2026
+            '2026-01-01': 'closed',      // New Year's Day
+            '2026-01-19': 'closed',      // MLK Day
+            '2026-02-16': 'closed',      // Presidents Day
+            '2026-04-03': 'closed',      // Good Friday
+            '2026-05-25': 'closed',      // Memorial Day
+            '2026-06-19': 'closed',      // Juneteenth
+            '2026-07-03': 'closed',      // Independence Day (observed)
+            '2026-09-07': 'closed',      // Labor Day
+            '2026-11-26': 'closed',      // Thanksgiving
+            '2026-11-27': 'early_close', // Day after Thanksgiving (1 PM)
+            '2026-12-24': 'early_close', // Christmas Eve (1 PM)
+            '2026-12-25': 'closed',      // Christmas
+          };
+
+          const holidayType = marketHolidays[isoDate];
+          const isHoliday = holidayType === 'closed';
+          const isEarlyClose = holidayType === 'early_close';
+
+          // Calculate market close time (1:00 PM = 780 min, 4:00 PM = 960 min)
+          const marketCloseMinutes = isEarlyClose ? 780 : 960;
+          const marketCloseTime = isEarlyClose ? '13:00' : '16:00';
+
+          // Recalculate market open status with early close awareness
+          const marketOpenAdjusted = marketMinutes >= 570 && marketMinutes < marketCloseMinutes;
+          const afterHoursAdjusted = marketMinutes >= marketCloseMinutes && marketMinutes < 1200;
 
           // Determine market status
           let marketStatus = 'CLOSED';
           if (marketDay && !isHoliday) {
-            if (marketOpen) marketStatus = 'OPEN';
+            if (marketOpenAdjusted) marketStatus = 'OPEN';
             else if (preMarket) marketStatus = 'PRE_MARKET';
-            else if (afterHours) marketStatus = 'AFTER_HOURS';
+            else if (afterHoursAdjusted) marketStatus = 'AFTER_HOURS';
+          }
+
+          // Calculate minutes until close
+          let minutesUntilClose = null;
+          let canTrade = false;
+          if (marketDay && !isHoliday && marketOpenAdjusted) {
+            minutesUntilClose = marketCloseMinutes - marketMinutes;
+            canTrade = minutesUntilClose > 5; // Don't trade in last 5 minutes
           }
 
           return {
@@ -1548,6 +1721,10 @@ ${allNews.map((article, i) =>
                   unix: Math.floor(now.getTime() / 1000),
                   is_weekday: marketDay,
                   is_market_holiday: isHoliday,
+                  is_early_close_day: isEarlyClose,
+                  market_close_time: marketCloseTime,
+                  minutes_until_close: minutesUntilClose,
+                  can_trade: canTrade,
                   market_status: marketStatus,
                   markets_open_today: marketDay && !isHoliday,
                 }, null, 2),
@@ -1560,6 +1737,18 @@ ${allNews.map((article, i) =>
             isError: true,
           };
         }
+      }
+
+      case 'get_session_status': {
+        const data = await callTradingBot('/session/status');
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(data, null, 2),
+            },
+          ],
+        };
       }
 
       // Vector DB: Find similar trading setups

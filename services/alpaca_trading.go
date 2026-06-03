@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"prophet-trader/interfaces"
+	"strconv"
 	"time"
 
 	"github.com/alpacahq/alpaca-trade-api-go/v3/alpaca"
@@ -399,6 +400,69 @@ func (s *AlpacaTradingService) GetOptionsPosition(ctx context.Context, symbol st
 	return nil, fmt.Errorf("options position not found: %s", symbol)
 }
 
+// parseOCCSymbol extracts components from OCC format option symbols
+// Example: NVDA260320C00185000 -> underlying=NVDA, exp=2026-03-20 16:00 ET, type=call, strike=185.00
+func parseOCCSymbol(symbol string) (underlying string, expiration time.Time, optionType string, strike float64) {
+	if len(symbol) < 15 {
+		return symbol, time.Time{}, "", 0
+	}
+
+	// Find where the date starts (first digit after letters)
+	dateIdx := 0
+	for i, r := range symbol {
+		if r >= '0' && r <= '9' {
+			dateIdx = i
+			break
+		}
+	}
+
+	// Need at least dateIdx + 6 (date) + 1 (type) + 1 (strike min)
+	if dateIdx == 0 || dateIdx+8 > len(symbol) {
+		return symbol, time.Time{}, "", 0
+	}
+
+	underlying = symbol[:dateIdx]
+	dateStr := symbol[dateIdx : dateIdx+6]
+	optType := symbol[dateIdx+6 : dateIdx+7]
+	strikeStr := symbol[dateIdx+7:]
+
+	// Parse date (YYMMDD) with error checking
+	year, err := strconv.Atoi("20" + dateStr[0:2])
+	if err != nil {
+		return symbol, time.Time{}, "", 0
+	}
+	month, err := strconv.Atoi(dateStr[2:4])
+	if err != nil || month < 1 || month > 12 {
+		return symbol, time.Time{}, "", 0
+	}
+	day, err := strconv.Atoi(dateStr[4:6])
+	if err != nil || day < 1 || day > 31 {
+		return symbol, time.Time{}, "", 0
+	}
+
+	// Options expire at 4 PM ET on expiration day
+	etLocation, _ := time.LoadLocation("America/New_York")
+	expiration = time.Date(year, time.Month(month), day, 16, 0, 0, 0, etLocation)
+
+	// Parse option type
+	if optType == "C" {
+		optionType = "call"
+	} else if optType == "P" {
+		optionType = "put"
+	} else {
+		return symbol, time.Time{}, "", 0
+	}
+
+	// Parse strike with error checking (divide by 1000 to get actual price)
+	strikeInt, err := strconv.ParseInt(strikeStr, 10, 64)
+	if err != nil {
+		return symbol, time.Time{}, "", 0
+	}
+	strike = float64(strikeInt) / 1000.0
+
+	return
+}
+
 // ListOptionsPositions retrieves all options positions
 func (s *AlpacaTradingService) ListOptionsPositions(ctx context.Context) ([]*interfaces.OptionsPosition, error) {
 	positions, err := s.client.GetPositions()
@@ -409,16 +473,22 @@ func (s *AlpacaTradingService) ListOptionsPositions(ctx context.Context) ([]*int
 	optionsPositions := []*interfaces.OptionsPosition{}
 	for _, pos := range positions {
 		if pos.AssetClass == "us_option" {
+			underlying, expiration, optionType, strike := parseOCCSymbol(pos.Symbol)
+
 			optionsPositions = append(optionsPositions, &interfaces.OptionsPosition{
-				Symbol:        pos.Symbol,
-				Qty:           pos.Qty.InexactFloat64(),
-				AvgEntryPrice: pos.AvgEntryPrice.InexactFloat64(),
-				MarketValue:   pos.MarketValue.InexactFloat64(),
-				CostBasis:     pos.CostBasis.InexactFloat64(),
-				UnrealizedPL:  pos.UnrealizedPL.InexactFloat64(),
+				Symbol:         pos.Symbol,
+				Underlying:     underlying,
+				Qty:            pos.Qty.InexactFloat64(),
+				AvgEntryPrice:  pos.AvgEntryPrice.InexactFloat64(),
+				MarketValue:    pos.MarketValue.InexactFloat64(),
+				CostBasis:      pos.CostBasis.InexactFloat64(),
+				UnrealizedPL:   pos.UnrealizedPL.InexactFloat64(),
 				UnrealizedPLPC: pos.UnrealizedIntradayPLPC.InexactFloat64(),
-				CurrentPrice:  pos.CurrentPrice.InexactFloat64(),
-				Side:          string(pos.Side),
+				CurrentPrice:   pos.CurrentPrice.InexactFloat64(),
+				Side:           string(pos.Side),
+				Expiration:     expiration,
+				Strike:         strike,
+				OptionType:     optionType,
 			})
 		}
 	}
