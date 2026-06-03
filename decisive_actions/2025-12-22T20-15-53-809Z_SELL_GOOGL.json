@@ -1,0 +1,12 @@
+{
+  "timestamp": "2025-12-22T20:15:53.809Z",
+  "action": "SELL",
+  "symbol": "GOOGL",
+  "reasoning": "GOOGL $312.50C hit +28.5%, near +30% target. Taking profit at $1.67. Volatile day - tested stop at $1.27 earlier, now at highs. Don't get greedy with 4 DTE options heading into holiday week.",
+  "market_data": {
+    "entry": 1.3,
+    "exit": 1.67,
+    "pnl_pct": 28.5,
+    "pnl_dollars": 296
+  }
+}
