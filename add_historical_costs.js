@@ -34,7 +34,7 @@ db.exec(`
 async function main() {
   console.log('=== LOADING HISTORICAL COSTS ===\n');
 
-  const yamlPath = '/Users/chris/2_project-files/projects/active-projects/meap2-it/reference/data/cost-database/vetted-cost-raw.yaml';
+  const yamlPath = '/Users/chris/chungus/dev/meap2-it/reference/data/cost-database/vetted-cost-raw.yaml';
   const content = fs.readFileSync(yamlPath, 'utf-8');
   const data = yaml.load(content);
 
